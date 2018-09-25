@@ -53,7 +53,7 @@ class ApiDocGeneratorTest extends TestCase
 
         $route = new Route(['GET'], '/get', ['uses' => TestController::class.'@parseMethodDescription']);
         $parsed = $this->generator->processRoute($route);
-        $this->assertSame(['GET', 'HEAD'], $parsed['methods']);
+        $this->assertSame(['GET'], $parsed['methods']);
 
         $route = new Route(['POST'], '/post', ['uses' => TestController::class.'@parseMethodDescription']);
         $parsed = $this->generator->processRoute($route);
@@ -337,15 +337,25 @@ class ApiDocGeneratorTest extends TestCase
         }
     }
 
+    public function testCustomFormRequestValidatorIsSupported()
+    {
+        RouteFacade::post('/post', TestController::class.'@customFormRequestValidator');
+        $route = new Route(['POST'], '/post', ['uses' => TestController::class.'@customFormRequestValidator']);
+        $parsed = $this->generator->processRoute($route);
+        $parameters = $parsed['parameters'];
+
+        $this->assertNotEmpty($parameters);
+    }
+
     public function testCanParseResponseTag()
     {
         RouteFacade::post('/responseTag', TestController::class.'@responseTag');
-        $route = new Route(['GET'], '/responseTag', ['uses' => TestController::class.'@responseTag']);
+        $route = new Route(['POST'], '/responseTag', ['uses' => TestController::class.'@responseTag']);
         $parsed = $this->generator->processRoute($route);
         $this->assertTrue(is_array($parsed));
         $this->assertArrayHasKey('showresponse', $parsed);
         $this->assertTrue($parsed['showresponse']);
-        $this->assertSame($parsed['response'], '"{\n data: [],\n}"');
+        $this->assertJsonStringEqualsJsonString($parsed['response'], '{ "data": []}');
     }
 
     public function testCanParseTransformerTag()

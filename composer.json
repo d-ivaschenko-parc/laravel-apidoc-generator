@@ -37,5 +37,15 @@
         "psr-4": {
             "Mpociot\\ApiDoc\\Tests\\": "tests/"
         }
+    },
+    "scripts": {
+        "test-ci": "phpunit --coverage-clover=coverage.xml"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Mpociot\\ApiDoc\\ApiDocGeneratorServiceProvider"
+            ]
+       }
     }
 }

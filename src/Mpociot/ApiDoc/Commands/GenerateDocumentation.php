@@ -3,15 +3,16 @@
 namespace Mpociot\ApiDoc\Commands;
 
 use ReflectionClass;
+use Illuminate\Routing\Route;
 use Illuminate\Console\Command;
 use Mpociot\Reflection\DocBlock;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Route;
 use Mpociot\Documentarian\Documentarian;
 use Mpociot\ApiDoc\Postman\CollectionWriter;
 use Mpociot\ApiDoc\Generators\DingoGenerator;
 use Mpociot\ApiDoc\Generators\LaravelGenerator;
 use Mpociot\ApiDoc\Generators\AbstractGenerator;
+use Illuminate\Support\Facades\Route as RouteFacade;
 
 class GenerateDocumentation extends Command
 {
@@ -20,14 +21,17 @@ class GenerateDocumentation extends Command
      *
      * @var string
      */
-    protected $signature = 'api:generate 
+    protected $signature = 'api:generate
                             {--output=public/docs : The output path for the generated documentation}
-                            {--routePrefix= : The route prefix to use for generation}
+                            {--routeDomain= : The route domain (or domains) to use for generation}
+                            {--routePrefix= : The route prefix (or prefixes) to use for generation}
                             {--routes=* : The route names to use for generation}
                             {--middleware= : The middleware to use for generation}
                             {--noResponseCalls : Disable API response calls}
                             {--noPostmanCollection : Disable Postman collection creation}
                             {--useMiddlewares : Use all configured route middlewares}
+                            {--authProvider=users : The authentication provider to use for API response calls}
+                            {--authGuard=web : The authentication guard to use for API response calls}
                             {--actAsUserId= : The user ID to use for API response calls}
                             {--router=laravel : The router to be used (Laravel or Dingo)}
                             {--force : Force rewriting of existing routes}
@@ -66,23 +70,29 @@ class GenerateDocumentation extends Command
         }
 
         $allowedRoutes = $this->option('routes');
+        $routeDomain = $this->option('routeDomain');
         $routePrefix = $this->option('routePrefix');
         $middleware = $this->option('middleware');
 
         $this->setUserToBeImpersonated($this->option('actAsUserId'));
 
-        if ($routePrefix === null && ! count($allowedRoutes) && $middleware === null) {
-            $this->error('You must provide either a route prefix or a route or a middleware to generate the documentation.');
+        if ($routePrefix === null && $routeDomain === null && ! count($allowedRoutes) && $middleware === null) {
+            $this->error('You must provide either a route prefix, a route domain, a route or a middleware to generate the documentation.');
 
             return false;
         }
 
         $generator->prepareMiddleware($this->option('useMiddlewares'));
 
-        if ($this->option('router') === 'laravel') {
-            $parsedRoutes = $this->processLaravelRoutes($generator, $allowedRoutes, $routePrefix, $middleware);
-        } else {
-            $parsedRoutes = $this->processDingoRoutes($generator, $allowedRoutes, $routePrefix, $middleware);
+        $routePrefixes = explode(',', $routePrefix ?: '*');
+        $routeDomains = explode(',', $routeDomain ?: '*');
+
+        $parsedRoutes = [];
+
+        foreach ($routeDomains as $routeDomain) {
+            foreach ($routePrefixes as $routePrefix) {
+                $parsedRoutes += $this->processRoutes($generator, $allowedRoutes, $routeDomain, $routePrefix, $middleware);
+            }
         }
         $parsedRoutes = collect($parsedRoutes)->groupBy('resource')->sort(function ($a, $b) {
             return strcmp($a->first()['resource'], $b->first()['resource']);
@@ -101,6 +111,8 @@ class GenerateDocumentation extends Command
         $outputPath = $this->option('output');
         $targetFile = $outputPath.DIRECTORY_SEPARATOR.'source'.DIRECTORY_SEPARATOR.'index.md';
         $compareFile = $outputPath.DIRECTORY_SEPARATOR.'source'.DIRECTORY_SEPARATOR.'.compare.md';
+        $prependFile = $outputPath.DIRECTORY_SEPARATOR.'source'.DIRECTORY_SEPARATOR.'prepend.md';
+        $appendFile = $outputPath.DIRECTORY_SEPARATOR.'source'.DIRECTORY_SEPARATOR.'append.md';
 
         $infoText = view('apidoc::partials.info')
             ->with('outputPath', ltrim($outputPath, 'public/'))
@@ -122,10 +134,6 @@ class GenerateDocumentation extends Command
         if (file_exists($targetFile) && file_exists($compareFile)) {
             $generatedDocumentation = file_get_contents($targetFile);
             $compareDocumentation = file_get_contents($compareFile);
-
-            if (preg_match('/<!-- START_INFO -->(.*)<!-- END_INFO -->/is', $generatedDocumentation, $generatedInfoText)) {
-                $infoText = trim($generatedInfoText[1], "\n");
-            }
 
             if (preg_match('/---(.*)---\\s<!-- START_INFO -->/is', $generatedDocumentation, $generatedFrontmatter)) {
                 $frontmatter = trim($generatedFrontmatter[1], "\n");
@@ -150,12 +158,19 @@ class GenerateDocumentation extends Command
             });
         }
 
+        $prependFileContents = file_exists($prependFile)
+            ? file_get_contents($prependFile)."\n" : '';
+        $appendFileContents = file_exists($appendFile)
+            ? "\n".file_get_contents($appendFile) : '';
+
         $documentarian = new Documentarian();
 
         $markdown = view('apidoc::documentarian')
             ->with('writeCompareFile', false)
             ->with('frontmatter', $frontmatter)
             ->with('infoText', $infoText)
+            ->with('prependMd', $prependFileContents)
+            ->with('appendMd', $appendFileContents)
             ->with('outputPath', $this->option('output'))
             ->with('showPostmanCollectionButton', ! $this->option('noPostmanCollection'))
             ->with('parsedRoutes', $parsedRouteOutput);
@@ -172,6 +187,8 @@ class GenerateDocumentation extends Command
             ->with('writeCompareFile', true)
             ->with('frontmatter', $frontmatter)
             ->with('infoText', $infoText)
+            ->with('prependMd', $prependFileContents)
+            ->with('appendMd', $appendFileContents)
             ->with('outputPath', $this->option('output'))
             ->with('showPostmanCollectionButton', ! $this->option('noPostmanCollection'))
             ->with('parsedRoutes', $parsedRouteOutput);
@@ -184,7 +201,7 @@ class GenerateDocumentation extends Command
 
         $documentarian->generate($outputPath);
 
-        $this->info('Wrote HTML documentation to: '.$outputPath.'/public/index.html');
+        $this->info('Wrote HTML documentation to: '.$outputPath.'/index.html');
 
         if ($this->option('noPostmanCollection') !== true) {
             $this->info('Generating Postman collection');
@@ -202,6 +219,7 @@ class GenerateDocumentation extends Command
         if (empty($bindings)) {
             return [];
         }
+
         $bindings = explode('|', $bindings);
         $resultBindings = [];
         foreach ($bindings as $binding) {
@@ -220,12 +238,13 @@ class GenerateDocumentation extends Command
         if (! empty($actAs)) {
             if (version_compare($this->laravel->version(), '5.2.0', '<')) {
                 $userModel = config('auth.model');
-                $user = $userModel::find((int) $actAs);
+                $user = $userModel::find($actAs);
                 $this->laravel['auth']->setUser($user);
             } else {
-                $userModel = config('auth.providers.users.model');
-                $user = $userModel::find((int) $actAs);
-                $this->laravel['auth']->guard()->setUser($user);
+                $provider = $this->option('authProvider');
+                $userModel = config("auth.providers.$provider.model");
+                $user = $userModel::find($actAs);
+                $this->laravel['auth']->guard($this->option('authGuard'))->setUser($user);
             }
         }
     }
@@ -236,59 +255,38 @@ class GenerateDocumentation extends Command
     private function getRoutes()
     {
         if ($this->option('router') === 'laravel') {
-            return Route::getRoutes();
+            return RouteFacade::getRoutes();
         } else {
-            return app('Dingo\Api\Routing\Router')->getRoutes()[$this->option('routePrefix')];
+            return app('Dingo\Api\Routing\Router')->getRoutes();
         }
     }
 
     /**
      * @param AbstractGenerator  $generator
      * @param $allowedRoutes
+     * @param $routeDomain
      * @param $routePrefix
      *
      * @return array
      */
-    private function processLaravelRoutes(AbstractGenerator $generator, $allowedRoutes, $routePrefix, $middleware)
+    private function processRoutes(AbstractGenerator $generator, array $allowedRoutes, $routeDomain, $routePrefix, $middleware)
     {
-        $withResponse = $this->option('noResponseCalls') === false;
+        $withResponse = $this->option('noResponseCalls') == false;
         $routes = $this->getRoutes();
         $bindings = $this->getBindings();
         $parsedRoutes = [];
         foreach ($routes as $route) {
-            if (in_array($route->getName(), $allowedRoutes) || str_is($routePrefix, $generator->getUri($route)) || in_array($middleware, $route->middleware())) {
+            /** @var Route $route */
+            if (in_array($route->getName(), $allowedRoutes)
+                || (str_is($routeDomain, $generator->getDomain($route))
+                    && str_is($routePrefix, $generator->getUri($route)))
+                || in_array($middleware, $route->middleware())
+               ) {
                 if ($this->isValidRoute($route) && $this->isRouteVisibleForDocumentation($route->getAction()['uses'])) {
-                    $parsedRoutes[] = $generator->processRoute($route, $bindings, $this->option('header'), $withResponse);
+                    $parsedRoutes[] = $generator->processRoute($route, $bindings, $this->option('header'), $withResponse && in_array('GET', $generator->getMethods($route)));
                     $this->info('Processed route: ['.implode(',', $generator->getMethods($route)).'] '.$generator->getUri($route));
                 } else {
                     $this->warn('Skipping route: ['.implode(',', $generator->getMethods($route)).'] '.$generator->getUri($route));
-                }
-            }
-        }
-
-        return $parsedRoutes;
-    }
-
-    /**
-     * @param AbstractGenerator $generator
-     * @param $allowedRoutes
-     * @param $routePrefix
-     *
-     * @return array
-     */
-    private function processDingoRoutes(AbstractGenerator $generator, $allowedRoutes, $routePrefix, $middleware)
-    {
-        $withResponse = $this->option('noResponseCalls') === false;
-        $routes = $this->getRoutes();
-        $bindings = $this->getBindings();
-        $parsedRoutes = [];
-        foreach ($routes as $route) {
-            if (empty($allowedRoutes) || in_array($route->getName(), $allowedRoutes) || str_is($routePrefix, $route->uri()) || in_array($middleware, $route->middleware())) {
-                if ($this->isValidRoute($route) && $this->isRouteVisibleForDocumentation($route->getAction()['uses'])) {
-                    $parsedRoutes[] = $generator->processRoute($route, $bindings, $this->option('header'), $withResponse);
-                    $this->info('Processed route: ['.implode(',', $route->getMethods()).'] '.$route->uri());
-                } else {
-                    $this->warn('Skipping route: ['.implode(',', $route->getMethods()).'] '.$route->uri());
                 }
             }
         }
@@ -301,7 +299,7 @@ class GenerateDocumentation extends Command
      *
      * @return bool
      */
-    private function isValidRoute($route)
+    private function isValidRoute(Route $route)
     {
         return ! is_callable($route->getAction()['uses']) && ! is_null($route->getAction()['uses']);
     }

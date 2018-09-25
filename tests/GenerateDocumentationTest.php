@@ -2,7 +2,8 @@
 
 namespace Mpociot\ApiDoc\Tests;
 
-use Illuminate\Routing\Route;
+use RecursiveIteratorIterator;
+use RecursiveDirectoryIterator;
 use Orchestra\Testbench\TestCase;
 use Illuminate\Contracts\Console\Kernel;
 use Dingo\Api\Provider\LaravelServiceProvider;
@@ -32,7 +33,20 @@ class GenerateDocumentationTest extends TestCase
 
     public function tearDown()
     {
-        exec('rm -rf '.__DIR__.'/../public/docs');
+        // delete the generated docs - compatible cross-platform
+        $dir = __DIR__.'/../public/docs';
+        if (is_dir($dir)) {
+            $files = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::CHILD_FIRST
+            );
+
+            foreach ($files as $fileinfo) {
+                $todo = ($fileinfo->isDir() ? 'rmdir' : 'unlink');
+                $todo($fileinfo->getRealPath());
+            }
+            rmdir($dir);
+        }
     }
 
     /**
@@ -48,10 +62,10 @@ class GenerateDocumentationTest extends TestCase
         ];
     }
 
-    public function testConsoleCommandNeedsAPrefixOrRoute()
+    public function testConsoleCommandNeedsPrefixesOrDomainsOrRoutes()
     {
         $output = $this->artisan('api:generate');
-        $this->assertEquals('You must provide either a route prefix or a route or a middleware to generate the documentation.'.PHP_EOL, $output);
+        $this->assertEquals('You must provide either a route prefix, a route domain, a route or a middleware to generate the documentation.'.PHP_EOL, $output);
     }
 
     public function testConsoleCommandDoesNotWorkWithClosure()
@@ -64,8 +78,8 @@ class GenerateDocumentationTest extends TestCase
         $output = $this->artisan('api:generate', [
             '--routePrefix' => 'api/*',
         ]);
-        $this->assertContains('Skipping route: [GET,HEAD] api/closure', $output);
-        $this->assertContains('Processed route: [GET,HEAD] api/test', $output);
+        $this->assertContains('Skipping route: [GET] api/closure', $output);
+        $this->assertContains('Processed route: [GET] api/test', $output);
     }
 
     public function testConsoleCommandDoesNotWorkWithClosureUsingDingo()
@@ -85,8 +99,8 @@ class GenerateDocumentationTest extends TestCase
                 '--router' => 'dingo',
                 '--routePrefix' => 'v1',
             ]);
-            $this->assertContains('Skipping route: [GET,HEAD] closure', $output);
-            $this->assertContains('Processed route: [GET,HEAD] test', $output);
+            $this->assertContains('Skipping route: [GET] closure', $output);
+            $this->assertContains('Processed route: [GET] test', $output);
         });
     }
 
@@ -98,8 +112,8 @@ class GenerateDocumentationTest extends TestCase
         $output = $this->artisan('api:generate', [
             '--routePrefix' => 'api/*',
         ]);
-        $this->assertContains('Skipping route: [GET,HEAD] api/skip', $output);
-        $this->assertContains('Processed route: [GET,HEAD] api/test', $output);
+        $this->assertContains('Skipping route: [GET] api/skip', $output);
+        $this->assertContains('Processed route: [GET] api/test', $output);
     }
 
     public function testCanParseResourceRoutes()
@@ -108,9 +122,9 @@ class GenerateDocumentationTest extends TestCase
         $output = $this->artisan('api:generate', [
             '--routePrefix' => 'api/*',
         ]);
-        $generatedMarkdown = file_get_contents(__DIR__.'/../public/docs/source/index.md');
-        $fixtureMarkdown = file_get_contents(__DIR__.'/Fixtures/resource_index.md');
-        $this->assertSame($generatedMarkdown, $fixtureMarkdown);
+        $fixtureMarkdown = __DIR__.'/Fixtures/resource_index.md';
+        $generatedMarkdown = __DIR__.'/../public/docs/source/index.md';
+        $this->assertFilesHaveSameContent($fixtureMarkdown, $generatedMarkdown);
     }
 
     public function testGeneratedMarkdownFileIsCorrect()
@@ -122,11 +136,34 @@ class GenerateDocumentationTest extends TestCase
             '--routePrefix' => 'api/*',
         ]);
 
-        $generatedMarkdown = file_get_contents(__DIR__.'/../public/docs/source/index.md');
-        $compareMarkdown = file_get_contents(__DIR__.'/../public/docs/source/.compare.md');
-        $fixtureMarkdown = file_get_contents(__DIR__.'/Fixtures/index.md');
-        $this->assertSame($generatedMarkdown, $fixtureMarkdown);
-        $this->assertSame($compareMarkdown, $fixtureMarkdown);
+        $generatedMarkdown = __DIR__.'/../public/docs/source/index.md';
+        $compareMarkdown = __DIR__.'/../public/docs/source/.compare.md';
+        $fixtureMarkdown = __DIR__.'/Fixtures/index.md';
+        $this->assertFilesHaveSameContent($fixtureMarkdown, $generatedMarkdown);
+        $this->assertFilesHaveSameContent($fixtureMarkdown, $compareMarkdown);
+    }
+
+    public function testCanPrependAndAppendDataToGeneratedMarkdown()
+    {
+        RouteFacade::get('/api/test', TestController::class.'@parseMethodDescription');
+        RouteFacade::get('/api/fetch', TestController::class.'@fetchRouteResponse');
+
+        $this->artisan('api:generate', [
+            '--routePrefix' => 'api/*',
+        ]);
+
+        $prependMarkdown = __DIR__.'/Fixtures/prepend.md';
+        $appendMarkdown = __DIR__.'/Fixtures/append.md';
+        copy($prependMarkdown, __DIR__.'/../public/docs/source/prepend.md');
+        copy($appendMarkdown, __DIR__.'/../public/docs/source/append.md');
+
+        $this->artisan('api:generate', [
+            '--routePrefix' => 'api/*',
+        ]);
+
+        $generatedMarkdown = __DIR__.'/../public/docs/source/index.md';
+        $this->assertContainsRaw($this->getFileContents($prependMarkdown), $this->getFileContents($generatedMarkdown));
+        $this->assertContainsRaw($this->getFileContents($appendMarkdown), $this->getFileContents($generatedMarkdown));
     }
 
     public function testAddsBindingsToGetRouteRules()
@@ -171,8 +208,8 @@ class GenerateDocumentationTest extends TestCase
             ],
         ]);
 
-        $generatedMarkdown = file_get_contents(__DIR__.'/../public/docs/source/index.md');
-        $this->assertContains('"authorization": [
+        $generatedMarkdown = $this->getFileContents(__DIR__.'/../public/docs/source/index.md');
+        $this->assertContainsRaw('"authorization": [
         "customAuthToken"
     ],
     "x-custom-header": [
@@ -203,5 +240,37 @@ class GenerateDocumentationTest extends TestCase
         $this->app[Kernel::class]->call($command, $parameters);
 
         return $this->app[Kernel::class]->output();
+    }
+
+    private function assertFilesHaveSameContent($pathToExpected, $pathToActual)
+    {
+        $actual = $this->getFileContents($pathToActual);
+        $expected = $this->getFileContents($pathToExpected);
+        $this->assertSame($expected, $actual);
+    }
+
+    /**
+     * Get the contents of a file in a cross-platform-compatible way.
+     *
+     * @param $path
+     *
+     * @return string
+     */
+    private function getFileContents($path)
+    {
+        return str_replace("\r\n", "\n", file_get_contents($path));
+    }
+
+    /**
+     * Assert that a string contains another string, ignoring all whitespace.
+     *
+     * @param $needle
+     * @param $haystack
+     */
+    private function assertContainsRaw($needle, $haystack)
+    {
+        $haystack = preg_replace('/\s/', '', $haystack);
+        $needle = preg_replace('/\s/', '', $needle);
+        $this->assertContains($needle, $haystack);
     }
 }

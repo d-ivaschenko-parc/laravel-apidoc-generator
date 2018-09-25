@@ -27,6 +27,11 @@ class TestController extends Controller
         return '';
     }
 
+    public function customFormRequestValidator(CustomValidatorRequest $request)
+    {
+        return '';
+    }
+
     public function addRouteBindingsToRequestClass(DynamicRequest $request)
     {
         return '';
@@ -74,7 +79,7 @@ class TestController extends Controller
 
     /**
      * @response {
-     *  data: [],
+     *  "data": []
      *}
      */
     public function responseTag()

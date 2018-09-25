@@ -4,13 +4,12 @@ Automatically generate your API documentation from your existing Laravel routes.
 
 `php artisan api:gen --routePrefix="settings/api/*"`
 
-![image](http://img.shields.io/packagist/v/mpociot/laravel-apidoc-generator.svg?style=flat)
-![image](http://img.shields.io/packagist/l/mpociot/laravel-apidoc-generator.svg?style=flat)
+[![Latest Stable Version](https://poser.pugx.org/mpociot/laravel-apidoc-generator/v/stable)](https://packagist.org/packages/mpociot/laravel-apidoc-generator)[![Total Downloads](https://poser.pugx.org/mpociot/laravel-apidoc-generator/downloads)](https://packagist.org/packages/mpociot/laravel-apidoc-generator)
+[![License](https://poser.pugx.org/mpociot/laravel-apidoc-generator/license)](https://packagist.org/packages/mpociot/laravel-apidoc-generator)
 [![codecov.io](https://codecov.io/github/mpociot/laravel-apidoc-generator/coverage.svg?branch=master)](https://codecov.io/github/mpociot/laravel-apidoc-generator?branch=master)
 [![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/mpociot/laravel-apidoc-generator/badges/quality-score.png?b=master)](https://scrutinizer-ci.com/g/mpociot/laravel-apidoc-generator/?branch=master)
 [![Build Status](https://travis-ci.org/mpociot/laravel-apidoc-generator.svg?branch=master)](https://travis-ci.org/mpociot/laravel-apidoc-generator)
-[![StyleCI](https://styleci.io/repos/57999295/shield)](https://styleci.io/repos/57999295)
-[![Dependency Status](https://www.versioneye.com/php/mpociot:laravel-apidoc-generator/dev-master/badge?style=flat)](https://www.versioneye.com/php/mpociot:laravel-apidoc-generator/dev-master)
+[![StyleCI](https://styleci.io/repos/57999295/shield?style=flat)](https://styleci.io/repos/57999295)
 
 
 ## Installation
@@ -20,7 +19,7 @@ Require this package with composer using the following command:
 ```sh
 $ composer require mpociot/laravel-apidoc-generator
 ```
-Go to your `config/app.php` and add the service provider:
+Using Laravel < 5.5? Go to your `config/app.php` and add the service provider:
 
 ```php
 Mpociot\ApiDoc\ApiDocGeneratorServiceProvider::class,
@@ -34,7 +33,15 @@ To generate your API documentation, use the `api:generate` artisan command.
 
 ```sh
 $ php artisan api:generate --routePrefix="api/v1/*"
+
 ```
+You can pass in multiple prefixes by spearating each prefix with comma.
+
+```sh
+$ php artisan api:generate --routePrefix="api/v1/*,api/public/*"
+```
+It will generate documentation for all of the routes whose prefixes are `api/v1/` and `api/public/`
+
 
 This command will scan your applications routes for the URIs matching `api/v1/*` and will parse these controller methods and form requests. For example:
 
@@ -44,7 +51,7 @@ Route::group(array('prefix' => 'api/v1', 'middleware' => []), function () {
 	// Custom route added to standard Resource
 	Route::get('example/foo', 'ExampleController@foo');
 	// Standard Resource route
-	Route::resource('example', 'ExampleController'));
+	Route::resource('example', 'ExampleController');
 });
 ```
 
@@ -53,8 +60,9 @@ Route::group(array('prefix' => 'api/v1', 'middleware' => []), function () {
 Option | Description
 --------- | -------
 `output` | The output path used for the generated documentation. Default: `public/docs`
-`routePrefix` | The route prefix to use for generation - `*` can be used as a wildcard
-`routes` | The route names to use for generation - Required if no routePrefix is provided
+`routePrefix` | The route prefix(es) to use for generation. `*` can be used as a wildcard. Multiple route prefixes can be specified by separating them with a comma (for instance `/v1,/v2`)
+`routeDomain` | The route domain(s) to use for generation. `*` can be used as a wildcard. Multiple route domains can be specified by separating them with a comma 
+`routes` | The route names to use for generation - Required if no routePrefix or routeDomain is provided
 `middleware` | The middlewares to use for generation
 `noResponseCalls` | Disable API response calls
 `noPostmanCollection` | Disable Postman collection creation
@@ -63,7 +71,7 @@ Option | Description
 `router` | The router to use, when processing the route files (can be Laravel or Dingo - defaults to Laravel)
 `bindings` | List of route bindings that should be replaced when trying to retrieve route results. Syntax format: `binding_one,id|binding_two,id`
 `force` | Force the re-generation of existing/modified API routes
-`header` | Custom HTTP headers to add to the example requests. Separate the header name and value with ":". For example: `--header 'Authorization: CustomToken'`
+`header` | Custom HTTP headers to add to the example requests. Separate the header name and value with ":". For example: `--header="Authorization: CustomToken"`
 
 ## Publish rule descriptions for customisation or translation.
 
@@ -84,7 +92,7 @@ This package uses these resources to generate the API documentation:
 
 This package uses the HTTP controller doc blocks to create a table of contents and show descriptions for your API methods.
 
-Using `@resource` in a doc block prior to each controller is useful as it creates a Group within the API documentation for all methods defined in that controller (rather than listing every method in a single list for all your controllers), but using `@resource` is not required. The short description after the `@resource` should be unique to allow anchor tags to navigate to this section. A longer description can be included below.
+Using `@resource` in a doc block prior to each controller is useful as it creates a Group within the API documentation for all methods defined in that controller (rather than listing every method in a single list for all your controllers), but using `@resource` is not required. The short description after the `@resource` should be unique to allow anchor tags to navigate to this section. A longer description can be included below. Custom formatting and `<aside>` tags are also supported. (see the [Documentarian docs](http://marcelpociot.de/documentarian/installation/markdown_syntax))
 
 Above each method within the controller you wish to include in your API documentation you should have a doc block. This should include a unique short description as the first entry. An optional second entry can be added with further information. Both descriptions will appear in the API documentation in a different format as shown below.
 
@@ -168,13 +176,14 @@ public function transformerCollectionTag()
 The @transformermodel tag is needed for PHP 5.* to get the model. For PHP 7 is it optional to specify the model that is used for the transformer.
 
 #### @response
-If you expliciet want to specify the result of a function you can set it in the docblock
+If you explicitly want to specify the result of a function you can set it in the docblock as JSON, using the `@response` annotation:
 
 ```php
 /**
  * @response {
- *  data: [],
- *}
+ *  "token": "eyJ0eXAi…",
+ *  "roles": ["admin"]
+ * }
  */
 public function responseTag()
 {
@@ -206,7 +215,7 @@ The generator automatically creates a Postman collection file, which you can imp
 
 If you don't want to create a Postman collection, use the `--noPostmanCollection` option, when generating the API documentation.
 
-As of as of Laravel 5.3, the default base URL added to the Postman collection will be that found in your Laravel `config/app.php` file. This will likely be `http://localhost`. If you wish to change this setting you can directly update the url or link this config value to your environment file to make it more flexible (as shown below):
+As of Laravel 5.3, the default base URL added to the Postman collection will be that found in your Laravel `config/app.php` file. This will likely be `http://localhost`. If you wish to change this setting you can directly update the url or link this config value to your environment file to make it more flexible (as shown below):
 
 ```php
 'url' => env('APP_URL', 'http://yourappdefault.app'),
@@ -230,6 +239,13 @@ $ php artisan api:update
 ```
 
 As an optional parameter, you can use `--location` to tell the update command where your documentation can be found.
+
+## Automatically add markdown to the beginning or end of the documentation
+ If you wish to automatically add the same content to the docs every time you generate, you can add a `prepend.md` and/or `append.md` file to the source folder, and they will be included above and below the generated documentation.
+ 
+ **File locations:**
+- `public/docs/source/prepend.md` - Will be added after the front matter and info text
+- `public/docs/source/append.md` - Will be added at the end of the document
 
 ## Skip single routes
 
